@@ -1,25 +1,29 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AnalysisModule } from './analysis/analysis.module';
 
 @Module({
   imports: [
-    // Permet de lire les variables d'environnement si besoin plus tard
-    ConfigModule.forRoot(),
-    
-    // Configuration de la connexion PostgreSQL
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      host: 'localhost',
-      port: 5432,
-      username: 'msd_user',
-      password: 'msd_password',
-      database: 'msd_db',
-      autoLoadEntities: true, // Charge automatiquement les entités qu'on va créer
-      synchronize: true,      // À désactiver en production, mais parfait en dev : crée/modifie les tables automatiquement selon tes entités
+    // Rend les variables d'environnement (.env) disponibles dans toute l'application
+    ConfigModule.forRoot({ isGlobal: true }),
+
+    // Configuration de la connexion PostgreSQL, lue depuis les variables d'environnement
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        host: config.get<string>('DB_HOST', 'localhost'),
+        port: config.get<number>('DB_PORT', 5432),
+        username: config.get<string>('DB_USERNAME', 'msd_user'),
+        password: config.get<string>('DB_PASSWORD', 'msd_password'),
+        database: config.get<string>('DB_DATABASE', 'msd_db'),
+        autoLoadEntities: true, // Charge automatiquement les entités déclarées dans les modules
+        synchronize: config.get<string>('DB_SYNCHRONIZE', 'true') === 'true', // À désactiver en production
+      }),
     }),
-    
+
     AnalysisModule,
   ],
   controllers: [],
