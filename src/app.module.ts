@@ -12,16 +12,24 @@ import { AnalysisModule } from './analysis/analysis.module';
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('DB_HOST', 'localhost'),
-        port: config.get<number>('DB_PORT', 5432),
-        username: config.get<string>('DB_USERNAME', 'msd_user'),
-        password: config.get<string>('DB_PASSWORD', 'msd_password'),
-        database: config.get<string>('DB_DATABASE', 'msd_db'),
-        autoLoadEntities: true, // Charge automatiquement les entités déclarées dans les modules
-        synchronize: config.get<string>('DB_SYNCHRONIZE', 'true') === 'true', // À désactiver en production
-      }),
+      useFactory: (config: ConfigService) => {
+        const synchronize =
+          config.get<string>('DB_SYNCHRONIZE', 'true') === 'true';
+        return {
+          type: 'postgres',
+          host: config.get<string>('DB_HOST', 'localhost'),
+          port: config.get<number>('DB_PORT', 5432),
+          username: config.get<string>('DB_USERNAME', 'msd_user'),
+          password: config.get<string>('DB_PASSWORD', 'msd_password'),
+          database: config.get<string>('DB_DATABASE', 'msd_db'),
+          autoLoadEntities: true, // Charge automatiquement les entités déclarées dans les modules
+          synchronize, // À désactiver en production (DB_SYNCHRONIZE=false) au profit des migrations
+          migrations: [__dirname + '/migrations/*{.ts,.js}'],
+          // Si synchronize est désactivé, les migrations s'appliquent automatiquement
+          // au démarrage — pas de commande manuelle à lancer en déploiement.
+          migrationsRun: !synchronize,
+        };
+      },
     }),
 
     AnalysisModule,

@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: msd_postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USERNAME:-msd_user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-msd_password}
@@ -19,6 +20,7 @@ services:
   api:
     build: .
     container_name: msd_api
+    restart: unless-stopped
     environment:
       PORT: 3000
       DB_HOST: postgres
@@ -26,7 +28,9 @@ services:
       DB_USERNAME: ${DB_USERNAME:-msd_user}
       DB_PASSWORD: ${DB_PASSWORD:-msd_password}
       DB_DATABASE: ${DB_DATABASE:-msd_db}
-      DB_SYNCHRONIZE: ${DB_SYNCHRONIZE:-true}
+      # false : le schéma est géré par les migrations (src/migrations), appliquées
+      # automatiquement au démarrage. Ne pas mettre à true en déploiement labo.
+      DB_SYNCHRONIZE: ${DB_SYNCHRONIZE:-false}
     ports:
       - '3000:3000'
     depends_on:
