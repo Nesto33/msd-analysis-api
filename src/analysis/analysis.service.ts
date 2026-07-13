@@ -54,20 +54,35 @@ export class AnalysisService {
       );
     }
 
-    const rawData: ExcelRow[] = XLSX.utils.sheet_to_json(
+    const parsedRows: ExcelRow[] = XLSX.utils.sheet_to_json(
       workbook.Sheets[sheetName],
     );
 
-    if (rawData.length === 0) {
+    if (parsedRows.length === 0) {
       throw new BadRequestException('Le fichier Excel est vide.');
     }
 
-    const firstRow = rawData[0];
+    const firstRow = parsedRows[0];
     if (!('Sample' in firstRow) || !('Assay' in firstRow)) {
       throw new BadRequestException(
         'Colonnes manquantes : le fichier doit contenir au minimum les colonnes "Sample" et "Assay".',
       );
     }
+
+    // Excel peut stocker des noms d'échantillons purement numériques comme des
+    // nombres (et non des chaînes) : on force Sample/Assay en string pour éviter
+    // un crash sur `.startsWith` plus loin.
+    const rawData: ExcelRow[] = parsedRows.map((row) => ({
+      ...row,
+      Sample:
+        row.Sample === undefined || row.Sample === null
+          ? row.Sample
+          : String(row.Sample),
+      Assay:
+        row.Assay === undefined || row.Assay === null
+          ? row.Assay
+          : String(row.Assay),
+    }));
 
     // 2. Isoler les standards (commençant par "S00") et les échantillons
     const standards = rawData.filter(
@@ -145,16 +160,18 @@ export class AnalysisService {
           sample: Sample,
           assay: Assay,
           status: 'OK',
-          finalValue: finalMean.toFixed(4),
+          finalValue: String(finalMean),
         });
       } else {
         // Le CV dépasse le seuil : On applique les cas complexes (N)
+        // Comme dans le script Python (self.df), N est calculé sur l'ensemble
+        // des lignes (standards + échantillons), pas seulement sur les échantillons.
         const { status, val } = this.handleHighCvConditions(
           Sample,
           Assay,
           group,
           standards,
-          samples,
+          rawData,
         );
         finalResults.push({
           sample: Sample,
@@ -194,16 +211,21 @@ export class AnalysisService {
       const assayStandards = standards.filter((s) => s.Assay === assay);
       const threshold = thresholds[assay] ?? 25;
 
-      const allBelowThreshold = assayStandards.every(
-        (s) => (s['Calc. Conc. CV'] ?? 0) < threshold,
-      );
+      // Comme en pandas, une CV manquante (NaN) échoue toute comparaison "< threshold" :
+      // on ne doit pas la traiter comme 0 (ce qui la ferait passer le test à tort).
+      const isBelowThreshold = (s: ExcelRow) =>
+        s['Calc. Conc. CV'] !== undefined &&
+        s['Calc. Conc. CV'] !== null &&
+        s['Calc. Conc. CV'] < threshold;
+
+      const allBelowThreshold = assayStandards.every(isBelowThreshold);
 
       if (allBelowThreshold) {
         refs[assay] = threshold;
       } else {
         const nonS007Below = assayStandards
           .filter((s) => s.Sample !== 'S007')
-          .every((s) => (s['Calc. Conc. CV'] ?? 0) < threshold);
+          .every(isBelowThreshold);
         const s007 = assayStandards.find((s) => s.Sample === 'S007');
 
         if (nonS007Below && s007 && s007['Calc. Conc. Mean'] !== undefined) {
@@ -286,12 +308,14 @@ export class AnalysisService {
         const inRangeRow = group.find(
           (g) => g['Detection Range'] === 'In Detection Range',
         );
+        // Comme en Python, on prend la concentration telle quelle, sans repli
+        // arbitraire sur la moyenne si jamais elle est absente.
         return {
           status: 'In Range',
-          val: inRangeRow?.['Calc. Concentration'] ?? meanConcentration,
+          val: inRangeRow?.['Calc. Concentration'] ?? NaN,
         };
       }
-      return { status: 'Mean', val: meanConcentration.toFixed(4) };
+      return { status: 'Mean', val: meanConcentration };
     }
   }
 

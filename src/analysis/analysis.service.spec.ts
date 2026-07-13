@@ -84,8 +84,83 @@ describe('AnalysisService', () => {
     );
 
     expect(result?.status).toBe('OK');
-    expect(result?.finalValue).toBe((21).toFixed(4));
+    expect(result?.finalValue).toBe(String(21));
     expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps full float precision instead of rounding to 4 decimals', async () => {
+    const rows: Row[] = [
+      ...cleanStandardRows('IL6'),
+      {
+        Sample: 'P001',
+        Assay: 'IL6',
+        'Calc. Conc. CV': 10,
+        'Calc. Conc. Mean': 20,
+      },
+      {
+        Sample: 'P001',
+        Assay: 'IL6',
+        'Calc. Conc. CV': 12,
+        'Calc. Conc. Mean': 21,
+      },
+    ];
+
+    const analysis = await service.processAnalysis(buildFile(rows), {}, {});
+    const result = analysis.results.find(
+      (r) => r.sample === 'P001' && r.assay === 'IL6',
+    );
+
+    expect(result?.finalValue).toBe(String(20.5));
+  });
+
+  it('does not crash and treats a purely numeric sample name as a regular (non-standard) sample', async () => {
+    const rows: Row[] = [
+      ...cleanStandardRows('IL6'),
+      {
+        Sample: 123,
+        Assay: 'IL6',
+        'Calc. Conc. CV': 10,
+        'Calc. Conc. Mean': 20,
+      },
+      {
+        Sample: 123,
+        Assay: 'IL6',
+        'Calc. Conc. CV': 12,
+        'Calc. Conc. Mean': 22,
+      },
+    ];
+
+    const analysis = await service.processAnalysis(buildFile(rows), {}, {});
+    const result = analysis.results.find(
+      (r) => r.sample === '123' && r.assay === 'IL6',
+    );
+
+    expect(result?.status).toBe('OK');
+  });
+
+  it('invalidates the assay (like pandas NaN comparisons) when a standard is missing its Calc. Conc. CV', async () => {
+    const rows: Row[] = [
+      { Sample: 'S001', Assay: 'IL6', 'Calc. Conc. Mean': 10 }, // CV manquante
+      {
+        Sample: 'S007',
+        Assay: 'IL6',
+        'Calc. Conc. CV': 5,
+        'Calc. Conc. Mean': 10,
+      },
+      {
+        Sample: 'P003',
+        Assay: 'IL6',
+        'Calc. Conc. CV': 5,
+        'Calc. Conc. Mean': 5,
+      },
+    ];
+
+    const analysis = await service.processAnalysis(buildFile(rows), {}, {});
+    const result = analysis.results.find(
+      (r) => r.sample === 'P003' && r.assay === 'IL6',
+    );
+
+    expect(result?.status).toBe('Non analysé');
   });
 
   it('marks the assay "Non analysé" when standards never satisfy the CV/LLOQ conditions', async () => {
