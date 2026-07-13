@@ -25,6 +25,17 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Docker
+
+```bash
+cp .env.example .env   # à ajuster si besoin
+docker compose up --build
+```
+
+Lance Postgres + l'API sur `http://localhost:3000`, sans installation locale de Node ou
+de Postgres. Les identifiants et le nom de la base sont configurables via `.env`
+(`DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE`, `DB_SYNCHRONIZE`).
+
 ## Project setup
 
 ```bash
