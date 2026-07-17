@@ -47,19 +47,8 @@ npm run migration:generate -- src/migrations/NomDeLaMigration
 
 ## Déploiement sur une machine du labo
 
-1. Installer [Docker Desktop](https://www.docker.com/products/docker-desktop/) (ou Docker
-   Engine) sur la machine qui restera allumée en continu.
-2. Cloner ce dépôt, copier `.env.example` en `.env` et **changer `DB_PASSWORD`**
-   (les valeurs par défaut sont publiques, sur GitHub).
-3. `docker compose up -d --build` — les conteneurs redémarrent automatiquement avec la
-   machine (`restart: unless-stopped`).
-4. Récupérer l'adresse IP locale de la machine (`ipconfig` sur Windows, `ip a` sur
-   Linux/Mac) pour la donner à l'UI (voir son README, variable `API_URL`).
-5. Sauvegardes : `scripts/backup-db.sh` fait un `pg_dump` dans `./backups/` (conserve les
-   30 dernières). À planifier via le planificateur de tâches de l'OS, par ex. avec cron :
-   ```
-   0 2 * * * cd /chemin/vers/msd-analysis-api && ./scripts/backup-db.sh
-   ```
+Guide complet, pas à pas (prérequis, pare-feu, démarrage automatique, sauvegardes,
+dépannage) : voir **[DEPLOYMENT.md](./DEPLOYMENT.md)**.
 
 ## Project setup
 
