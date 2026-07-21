@@ -25,6 +25,31 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Docker
+
+```bash
+cp .env.example .env   # à ajuster si besoin
+docker compose up --build
+```
+
+Lance Postgres + l'API sur `http://localhost:3000`, sans installation locale de Node ou
+de Postgres. Les identifiants et le nom de la base sont configurables via `.env`
+(`DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE`, `DB_SYNCHRONIZE`).
+
+Le schéma de base de données est géré par des migrations (`src/migrations`), appliquées
+automatiquement au démarrage du conteneur tant que `DB_SYNCHRONIZE=false` (valeur par
+défaut du `docker-compose.yml`). Pour créer une nouvelle migration après avoir modifié
+une entité :
+
+```bash
+npm run migration:generate -- src/migrations/NomDeLaMigration
+```
+
+## Déploiement sur une machine du labo
+
+Guide complet, pas à pas (prérequis, pare-feu, démarrage automatique, sauvegardes,
+dépannage) : voir **[DEPLOYMENT.md](./DEPLOYMENT.md)**.
+
 ## Project setup
 
 ```bash

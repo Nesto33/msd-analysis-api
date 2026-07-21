@@ -1,18 +1,41 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
     container_name: msd_postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: msd_user
-      POSTGRES_PASSWORD: msd_password
-      POSTGRES_DB: msd_db
+      POSTGRES_USER: ${DB_USERNAME:-msd_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-msd_password}
+      POSTGRES_DB: ${DB_DATABASE:-msd_db}
     ports:
-      - "5432:5432"
+      - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME:-msd_user}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: msd_api
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME:-msd_user}
+      DB_PASSWORD: ${DB_PASSWORD:-msd_password}
+      DB_DATABASE: ${DB_DATABASE:-msd_db}
+      # false : le schéma est géré par les migrations (src/migrations), appliquées
+      # automatiquement au démarrage. Ne pas mettre à true en déploiement labo.
+      DB_SYNCHRONIZE: ${DB_SYNCHRONIZE:-false}
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:
-  

@@ -38,16 +38,72 @@ export class AnalysisService {
     if (!file) throw new BadRequestException('Aucun fichier fourni.');
 
     // 1. Lire le fichier Excel depuis le buffer mémoire
-    const workbook = XLSX.read(file.buffer, { type: 'buffer' });
+    let workbook: XLSX.WorkBook;
+    try {
+      workbook = XLSX.read(file.buffer, { type: 'buffer' });
+    } catch {
+      throw new BadRequestException(
+        "Le fichier fourni n'est pas un classeur Excel valide.",
+      );
+    }
+
     const sheetName = workbook.SheetNames[0];
-    const rawData: ExcelRow[] = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    if (!sheetName) {
+      throw new BadRequestException(
+        'Le fichier Excel ne contient aucune feuille.',
+      );
+    }
+
+    const parsedRows: ExcelRow[] = XLSX.utils.sheet_to_json(
+      workbook.Sheets[sheetName],
+    );
+
+    if (parsedRows.length === 0) {
+      throw new BadRequestException('Le fichier Excel est vide.');
+    }
+
+    const firstRow = parsedRows[0];
+    if (!('Sample' in firstRow) || !('Assay' in firstRow)) {
+      throw new BadRequestException(
+        'Colonnes manquantes : le fichier doit contenir au minimum les colonnes "Sample" et "Assay".',
+      );
+    }
+
+    // Excel peut stocker des noms d'échantillons purement numériques comme des
+    // nombres (et non des chaînes) : on force Sample/Assay en string pour éviter
+    // un crash sur `.startsWith` plus loin.
+    const rawData: ExcelRow[] = parsedRows.map((row) => ({
+      ...row,
+      Sample:
+        row.Sample === undefined || row.Sample === null
+          ? row.Sample
+          : String(row.Sample),
+      Assay:
+        row.Assay === undefined || row.Assay === null
+          ? row.Assay
+          : String(row.Assay),
+    }));
 
     // 2. Isoler les standards (commençant par "S00") et les échantillons
-    const standards = rawData.filter((r) => r.Sample && r.Sample.startsWith('S00'));
-    const samples = rawData.filter((r) => r.Sample && !r.Sample.startsWith('S00'));
+    const standards = rawData.filter(
+      (r) => r.Sample && r.Sample.startsWith('S00'),
+    );
+    const samples = rawData.filter(
+      (r) => r.Sample && !r.Sample.startsWith('S00'),
+    );
+
+    if (samples.length === 0) {
+      throw new BadRequestException(
+        'Aucun échantillon à analyser (uniquement des standards "S00…" trouvés).',
+      );
+    }
 
     // 3. Calculer les valeurs de référence par Assay (Logique "standards")
-    const referenceValues = this.calculateReferenceValues(standards, lloqs, thresholds);
+    const referenceValues = this.calculateReferenceValues(
+      standards,
+      lloqs,
+      thresholds,
+    );
 
     // Groupement des échantillons par [Sample + Assay]
     const groupedSamples = this.groupBySampleAndAssay(samples);
@@ -63,27 +119,66 @@ export class AnalysisService {
 
       if (ref === undefined || ref === null) {
         // Assay non valide
-        finalResults.push({ sample: Sample, assay: Assay, status: 'Non analysé', finalValue: 'Non analysé' });
+        finalResults.push({
+          sample: Sample,
+          assay: Assay,
+          status: 'Non analysé',
+          finalValue: 'Non analysé',
+        });
         continue;
       }
 
       // Calculer la moyenne du Calc. Conc. CV pour le groupe
-      const validCvs = group.map((g) => g['Calc. Conc. CV']).filter((v) => v !== undefined && v !== null) as number[];
-      const calcConcCvMean = validCvs.length ? validCvs.reduce((a, b) => a + b, 0) / validCvs.length : NaN;
+      const validCvs = group
+        .map((g) => g['Calc. Conc. CV'])
+        .filter((v) => v !== undefined && v !== null);
+      const calcConcCvMean = validCvs.length
+        ? validCvs.reduce((a, b) => a + b, 0) / validCvs.length
+        : NaN;
 
       // Vérifier si toutes les valeurs de "Calc. Conc. CV" sont NaN
       if (validCvs.length === 0) {
-        const { status, val } = this.handleNaConditions(Sample, Assay, group, samples);
-        finalResults.push({ sample: Sample, assay: Assay, status, finalValue: String(val) });
+        const { status, val } = this.handleNaConditions(
+          Sample,
+          Assay,
+          group,
+          samples,
+        );
+        finalResults.push({
+          sample: Sample,
+          assay: Assay,
+          status,
+          finalValue: String(val),
+        });
       } else if (calcConcCvMean < ref) {
         // Condition idéale : CV sous le seuil de référence
-        const means = group.map((g) => g['Calc. Conc. Mean']).filter((v) => v !== undefined) as number[];
+        const means = group
+          .map((g) => g['Calc. Conc. Mean'])
+          .filter((v) => v !== undefined);
         const finalMean = means.reduce((a, b) => a + b, 0) / means.length;
-        finalResults.push({ sample: Sample, assay: Assay, status: 'OK', finalValue: finalMean.toFixed(4) });
+        finalResults.push({
+          sample: Sample,
+          assay: Assay,
+          status: 'OK',
+          finalValue: String(finalMean),
+        });
       } else {
         // Le CV dépasse le seuil : On applique les cas complexes (N)
-        const { status, val } = this.handleHighCvConditions(Sample, Assay, group, standards, samples);
-        finalResults.push({ sample: Sample, assay: Assay, status, finalValue: String(val) });
+        // Comme dans le script Python (self.df), N est calculé sur l'ensemble
+        // des lignes (standards + échantillons), pas seulement sur les échantillons.
+        const { status, val } = this.handleHighCvConditions(
+          Sample,
+          Assay,
+          group,
+          standards,
+          rawData,
+        );
+        finalResults.push({
+          sample: Sample,
+          assay: Assay,
+          status,
+          finalValue: String(val),
+        });
       }
     }
 
@@ -104,7 +199,11 @@ export class AnalysisService {
 
   // --- Fonctions utilitaires internes traduisant ton code Python ---
 
-  private calculateReferenceValues(standards: ExcelRow[], lloqs: Record<string, number>, thresholds: Record<string, number>) {
+  private calculateReferenceValues(
+    standards: ExcelRow[],
+    lloqs: Record<string, number>,
+    thresholds: Record<string, number>,
+  ) {
     const refs: Record<string, number | null> = {};
     const assays = Array.from(new Set(standards.map((s) => s.Assay)));
 
@@ -112,12 +211,21 @@ export class AnalysisService {
       const assayStandards = standards.filter((s) => s.Assay === assay);
       const threshold = thresholds[assay] ?? 25;
 
-      const allBelowThreshold = assayStandards.every((s) => (s['Calc. Conc. CV'] ?? 0) < threshold);
+      // Comme en pandas, une CV manquante (NaN) échoue toute comparaison "< threshold" :
+      // on ne doit pas la traiter comme 0 (ce qui la ferait passer le test à tort).
+      const isBelowThreshold = (s: ExcelRow) =>
+        s['Calc. Conc. CV'] !== undefined &&
+        s['Calc. Conc. CV'] !== null &&
+        s['Calc. Conc. CV'] < threshold;
+
+      const allBelowThreshold = assayStandards.every(isBelowThreshold);
 
       if (allBelowThreshold) {
         refs[assay] = threshold;
       } else {
-        const nonS007Below = assayStandards.filter((s) => s.Sample !== 'S007').every((s) => (s['Calc. Conc. CV'] ?? 0) < threshold);
+        const nonS007Below = assayStandards
+          .filter((s) => s.Sample !== 'S007')
+          .every(isBelowThreshold);
         const s007 = assayStandards.find((s) => s.Sample === 'S007');
 
         if (nonS007Below && s007 && s007['Calc. Conc. Mean'] !== undefined) {
@@ -132,32 +240,58 @@ export class AnalysisService {
     return refs;
   }
 
-  private handleNaConditions(sample: string, assay: string, group: ExcelRow[], allSamples: ExcelRow[]) {
+  private handleNaConditions(
+    sample: string,
+    assay: string,
+    group: ExcelRow[],
+    allSamples: ExcelRow[],
+  ) {
     const highCvCount = this.countHighCvOtherAssays(sample, allSamples);
 
     if (highCvCount >= 2) {
       return { status: 'ND', val: 'ND' };
     } else {
-      const allBelowFit = group.every((g) => g['Detection Range'] === 'Below Fit Curve Range');
+      const allBelowFit = group.every(
+        (g) => g['Detection Range'] === 'Below Fit Curve Range',
+      );
       if (allBelowFit) {
         return { status: 'ND', val: 'ND' };
       } else {
-        const validConc = group.find((g) => g['Detection Range'] !== 'Below Fit Curve Range' && g['Calc. Concentration'] !== undefined);
-        return validConc 
-          ? { status: 'Valid Concentration', val: validConc['Calc. Concentration']! } 
+        const validConc = group.find(
+          (g) =>
+            g['Detection Range'] !== 'Below Fit Curve Range' &&
+            g['Calc. Concentration'] !== undefined,
+        );
+        return validConc
+          ? {
+              status: 'Valid Concentration',
+              val: validConc['Calc. Concentration']!,
+            }
           : { status: 'ND', val: 'ND' };
       }
     }
   }
 
-  private handleHighCvConditions(sample: string, assay: string, group: ExcelRow[], standards: ExcelRow[], allSamples: ExcelRow[]) {
+  private handleHighCvConditions(
+    sample: string,
+    assay: string,
+    group: ExcelRow[],
+    standards: ExcelRow[],
+    allSamples: ExcelRow[],
+  ) {
     const N = this.countHighCvOtherAssays(sample, allSamples);
-    const means = group.map((g) => g['Calc. Conc. Mean']).filter((v) => v !== undefined) as number[];
+    const means = group
+      .map((g) => g['Calc. Conc. Mean'])
+      .filter((v) => v !== undefined);
     const meanConcentration = means.reduce((a, b) => a + b, 0) / means.length;
-    const hasDetectionRange = group.some((g) => g['Detection Range']?.includes('In Detection Range'));
+    const hasDetectionRange = group.some((g) =>
+      g['Detection Range']?.includes('In Detection Range'),
+    );
 
     if (N >= 2) {
-      const s007 = standards.find((s) => s.Assay === assay && s.Sample === 'S007');
+      const s007 = standards.find(
+        (s) => s.Assay === assay && s.Sample === 'S007',
+      );
       const s007Mean = s007 ? (s007['Calc. Conc. Mean'] ?? 0) : 0;
 
       if (meanConcentration < s007Mean && !hasDetectionRange) {
@@ -167,16 +301,28 @@ export class AnalysisService {
       }
     } else {
       // Pour N == 1 ou N == 0
-      const detectionRangeCount = group.filter((g) => g['Detection Range']?.includes('In Detection Range')).length;
+      const detectionRangeCount = group.filter((g) =>
+        g['Detection Range']?.includes('In Detection Range'),
+      ).length;
       if (detectionRangeCount === 1) {
-        const inRangeRow = group.find((g) => g['Detection Range'] === 'In Detection Range');
-        return { status: 'In Range', val: inRangeRow?.['Calc. Concentration'] ?? meanConcentration };
+        const inRangeRow = group.find(
+          (g) => g['Detection Range'] === 'In Detection Range',
+        );
+        // Comme en Python, on prend la concentration telle quelle, sans repli
+        // arbitraire sur la moyenne si jamais elle est absente.
+        return {
+          status: 'In Range',
+          val: inRangeRow?.['Calc. Concentration'] ?? NaN,
+        };
       }
-      return { status: 'Mean', val: meanConcentration.toFixed(4) };
+      return { status: 'Mean', val: meanConcentration };
     }
   }
 
-  private countHighCvOtherAssays(sample: string, allSamples: ExcelRow[]): number {
+  private countHighCvOtherAssays(
+    sample: string,
+    allSamples: ExcelRow[],
+  ): number {
     const sampleRows = allSamples.filter((s) => s.Sample === sample);
     const assayCvs: Record<string, number[]> = {};
 
@@ -189,28 +335,33 @@ export class AnalysisService {
 
     let highCvCount = 0;
     for (const assay in assayCvs) {
-      const avg = assayCvs[assay].reduce((a, b) => a + b, 0) / assayCvs[assay].length;
+      const avg =
+        assayCvs[assay].reduce((a, b) => a + b, 0) / assayCvs[assay].length;
       if (avg > 40) highCvCount++;
     }
     return highCvCount;
   }
 
-  private groupBySampleAndAssay(samples: ExcelRow[]): Record<string, ExcelRow[]> {
-    return samples.reduce((groups, item) => {
-      const key = `${item.Sample}-${item.Assay}`;
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(item);
-      return groups;
-    }, {} as Record<string, ExcelRow[]>);
+  private groupBySampleAndAssay(
+    samples: ExcelRow[],
+  ): Record<string, ExcelRow[]> {
+    return samples.reduce(
+      (groups, item) => {
+        const key = `${item.Sample}-${item.Assay}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(item);
+        return groups;
+      },
+      {} as Record<string, ExcelRow[]>,
+    );
   }
-
 
   async findOne(id: string): Promise<Analysis | null> {
     return this.analysisRepository.findOne({
       where: { id },
       relations: {
-        results: true // <-- Remplace ['results'] par cet objet
-      }, 
+        results: true, // <-- Remplace ['results'] par cet objet
+      },
     });
   }
 }

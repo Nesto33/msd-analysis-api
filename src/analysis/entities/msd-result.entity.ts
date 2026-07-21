@@ -21,6 +21,8 @@ export class MsdResult {
   finalValue!: string;
 
   // On lie ce résultat à son analyse parente
-  @ManyToOne(() => Analysis, (analysis) => analysis.results, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Analysis, (analysis) => analysis.results, {
+    onDelete: 'CASCADE',
+  })
   analysis!: Analysis;
 }
