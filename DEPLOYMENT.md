@@ -103,7 +103,17 @@ l'étape précédente.
 
 ```powershell
 cd C:\msd-analysis\msd-analysis-ui
-"API_URL=http://192.168.1.50:3000" | Out-File -Encoding ascii .env
+notepad .env
+```
+
+Un fichier vide s'ouvre (accepte de le créer si Windows le demande). Colle dedans, remplace
+l'IP par la tienne, enregistre (Ctrl+S) et ferme :
+
+```
+API_URL=http://192.168.1.50:3000
+```
+
+```powershell
 docker compose up -d --build
 ```
 
