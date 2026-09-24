@@ -108,38 +108,12 @@ export class AnalysisController {
 
   @Get(':id/export')
   async exportToExcel(@Param('id') id: string, @Res() res: Response) {
-    // 1. Récupérer l'analyse depuis PostgreSQL
-    const analysis = await this.analysisService.findOne(id); // Assure-toi d'avoir cette méthode dans ton service
+    const analysis = await this.analysisService.findOne(id);
     if (!analysis) {
       return res.status(404).json({ message: 'Analyse introuvable' });
     }
 
-    // 2. Préparer les données pour l'onglet "Statuts"
-    const statusRows = analysis.results.map((r) => ({
-      Échantillon: r.sample,
-      Assay: r.assay,
-      Statut: r.status,
-      'Valeur Calculée': r.finalValue,
-    }));
-
-    // 3. Préparer les données pour l'onglet "Moyennes" (Logique simplifiée de groupe)
-    // On regroupe par Échantillon + Assay pour calculer la moyenne si nécessaire
-    const meanRows = statusRows.map((row) => ({
-      Échantillon: row['Échantillon'],
-      Assay: row['Assay'],
-      Moyenne: row['Valeur Calculée'],
-    }));
-
-    // 4. Créer le classeur Excel avec la bibliothèque 'xlsx'
-    const wb = XLSX.utils.book_new();
-
-    const wsStatus = XLSX.utils.json_to_sheet(statusRows);
-    const wsMean = XLSX.utils.json_to_sheet(meanRows);
-
-    XLSX.utils.book_append_sheet(wb, wsStatus, 'Statuts');
-    XLSX.utils.book_append_sheet(wb, wsMean, 'Moyennes');
-
-    // 5. Convertir en Buffer et envoyer le fichier au navigateur
+    const wb = this.analysisService.buildExportWorkbook(analysis);
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 
     res.setHeader(

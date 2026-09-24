@@ -356,6 +356,59 @@ export class AnalysisService {
     );
   }
 
+  // Reconstruit le tableau croisé Sample x Assay du script Python d'origine.
+  // Onglet "Vérification" : "OK" en texte quand le CV était bon ; sinon la
+  //   valeur/statut tel quel (ND, à reprendre, Non analysé, ou un nombre pour
+  //   les cas à CV élevé résolus par la logique complexe) — met en évidence
+  //   uniquement ce qui a nécessité une vérification manuelle.
+  // Onglet "Valeurs" : la même grille, mais "OK" est remplacé par la valeur
+  //   numérique réellement calculée — toutes les données traitées, sans label.
+  buildExportWorkbook(analysis: Analysis): XLSX.WorkBook {
+    const samples = Array.from(new Set(analysis.results.map((r) => r.sample)));
+    const assays = Array.from(new Set(analysis.results.map((r) => r.assay)));
+
+    const byKey = new Map<string, MsdResult>();
+    for (const r of analysis.results) {
+      byKey.set(`${r.sample}\u0000${r.assay}`, r);
+    }
+
+    const toCell = (value: string): string | number => {
+      const num = Number(value);
+      return value !== '' && Number.isFinite(num) ? num : value;
+    };
+
+    const verificationRows = samples.map((sample) => {
+      const row: Record<string, string | number> = { Sample: sample };
+      for (const assay of assays) {
+        const r = byKey.get(`${sample}\u0000${assay}`);
+        row[assay] = r ? (r.status === 'OK' ? 'OK' : toCell(r.finalValue)) : '';
+      }
+      return row;
+    });
+
+    const valueRows = samples.map((sample) => {
+      const row: Record<string, string | number> = { Sample: sample };
+      for (const assay of assays) {
+        const r = byKey.get(`${sample}\u0000${assay}`);
+        row[assay] = r ? toCell(r.finalValue) : '';
+      }
+      return row;
+    });
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(verificationRows),
+      'Vérification',
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(valueRows),
+      'Valeurs',
+    );
+    return wb;
+  }
+
   async findOne(id: string): Promise<Analysis | null> {
     return this.analysisRepository.findOne({
       where: { id },

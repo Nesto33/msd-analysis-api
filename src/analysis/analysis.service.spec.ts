@@ -327,4 +327,41 @@ describe('AnalysisService', () => {
       ),
     ).rejects.toThrow(BadRequestException);
   });
+
+  describe('buildExportWorkbook', () => {
+    it('pivote en Sample x Assay ; "Vérification" garde OK en texte, "Valeurs" le remplace par le nombre', () => {
+      const analysis = {
+        fileName: 'test.xlsx',
+        results: [
+          { sample: 'P001', assay: 'IL6', status: 'OK', finalValue: '21' },
+          {
+            sample: 'P001',
+            assay: 'TNFa',
+            status: 'à reprendre',
+            finalValue: 'à reprendre',
+          },
+          {
+            sample: 'P002',
+            assay: 'IL6',
+            status: 'ND',
+            finalValue: 'ND',
+          },
+        ],
+      } as unknown as Analysis;
+
+      const wb = service.buildExportWorkbook(analysis);
+
+      const verification = XLSX.utils.sheet_to_json(wb.Sheets['Vérification']);
+      const valeurs = XLSX.utils.sheet_to_json(wb.Sheets['Valeurs']);
+
+      expect(verification).toEqual([
+        { Sample: 'P001', IL6: 'OK', TNFa: 'à reprendre' },
+        { Sample: 'P002', IL6: 'ND', TNFa: '' },
+      ]);
+      expect(valeurs).toEqual([
+        { Sample: 'P001', IL6: 21, TNFa: 'à reprendre' },
+        { Sample: 'P002', IL6: 'ND', TNFa: '' },
+      ]);
+    });
+  });
 });
